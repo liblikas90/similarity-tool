@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>EP Patent Tool</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+    }
+    .input-group {
+      margin-bottom: 20px;
+    }
+    .container {
+      display: flex;
+      gap: 30px;
+    }
+    .left, .right {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .box {
+      padding: 10px;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      background-color: #f9f9f9;
+    }
+    .upload-box {
+      max-width: 300px;
+    }
+    .upload-box input[type="file"] {
+      display: block;
+      margin-bottom: 10px;
+    }
+    .loading {
+      color: orange;
+    }
+    .error {
+      color: red;
+    }
+    .unavailable {
+      color: gray;
+      font-style: italic;
+    }
+    h2 {
+      margin-top: 0;
+    }
+    #uploadStatus {
+      display: block;
+      margin-top: 10px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+    }
+    th, td {
+      padding: 6px;
+      border: 1px solid #ccc;
+    }
+    th {
+      background-color: #eee;
+    }
+    #xlfPreview {
+      margin-top: 40px;
+      max-width: 100%;
+    }
+    .ok-cell {
+      background-color: #d4edda;
+    }
+    .check-cell {
+      background-color: #ffeeba;
+    }
+  </style>
+</head>
+<body>
+  <h1>EP Patent Tool</h1>
+
+  <div class="input-group">
+    <input type="text" id="pubNum" placeholder="e.g., EP1000000" />
+    <button onclick="fetchPatentInfo()">Get Title + FR Abstract</button>
+  </div>
+
+  <div class="container">
+    <div class="left">
+      <div class="box">
+        <h2>Titles</h2>
+        <div id="result"></div>
+      </div>
+
+      <div class="box upload-box">
+        <h2>Upload .xlf File</h2>
+        <form id="uploadForm">
+          <input type="file" name="file" accept=".xlf" />
+          <button type="submit" style="margin-top: 8px;">Upload</button>
+          <span id="uploadStatus"></span>
+        </form>
+      </div>
+    </div>
+
+    <div class="right box">
+      <h2>🇫🇷 French Abstract</h2>
+      <p id="fr-abstract" class="unavailable"></p>
+    </div>
+  </div>
+
+  <div id="xlfPreviewContainer"></div>
+
+  <script>
+    async function fetchPatentInfo() {
+      const pub = document.getElementById("pubNum").value;
+      const result = document.getElementById("result");
+      const abstractEl = document.getElementById("fr-abstract");
+
+      result.innerHTML = "<span class='loading'>⏳ Fetching titles...</span>";
+      abstractEl.innerHTML = "<span class='loading'>⏳ Fetching abstract...</span>";
+      abstractEl.className = "";
+
+      fetch(`https://ipify.app.n8n.cloud/webhook/get-titles?pub=${pub}`)
+        .then(res => res.json())
+        .then(data => {
+          result.innerHTML = "";
+          if (data.error) {
+            result.innerHTML = `<span class='error'>❌ ${data.error}</span>`;
+          } else {
+            for (const [lang, title] of Object.entries(data.titles)) {
+              const p = document.createElement("p");
+              p.innerText = `${lang.toUpperCase()}: ${title}`;
+              result.appendChild(p);
+            }
+          }
+        });
+
+      fetch(`/get-abstract?pub=${pub}`)
+        .then(res => res.json())
+        .then(data => {
+          abstractEl.innerHTML = "";
+          if (data.error || data.abstract === "Unavailable") {
+            abstractEl.innerHTML = "<span class='unavailable'>Unavailable (timed out or failed)</span>";
+          } else {
+            abstractEl.innerText = data.abstract;
+          }
+        });
+    }
+
+    
+	document.getElementById("uploadForm").addEventListener("submit", async function (e) {
+  e.preventDefault();
+  const fileInput = e.target.querySelector("input[type='file']");
+  const statusEl = document.getElementById("uploadStatus");
+
+  if (!fileInput.files.length) {
+    statusEl.innerHTML = "❌ No file selected";
+    return;
+  }
+
+  const file = fileInput.files[0];
+  const uniqueSuffix = Date.now().toString(36) + "-" + Math.random().toString(36).substring(2, 8);
+  const fileName = `upload-${uniqueSuffix}.xlf`;
+  statusEl.innerHTML = "⏳ Generating upload URL...";
+
+  try {
+    // Step 1: Request presigned URL
+    const presignRes = await fetch("https://ipify.app.n8n.cloud/webhook/presign-upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename: fileName })
+    });
+
+    const { uploadUrl, resultUrl } = await presignRes.json();
+    if (!uploadUrl || !resultUrl) throw new Error("No presigned URL returned");
+
+    statusEl.innerHTML = "⏳ Uploading to S3...";
+
+    // Step 2: Upload to S3
+    await fetch(uploadUrl, {
+      method: "PUT",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: file
+    });
+
+    statusEl.innerHTML = "⏳ File uploaded. Waiting for processing...";
+
+    // Step 3: Poll for result
+    const maxAttempts = 20;
+    let attempts = 0;
+    let result = null;
+
+    while (attempts < maxAttempts) {
+      const check = await fetch(resultUrl);
+      if (check.ok) {
+        result = await check.json();
+        break;
+      }
+      await new Promise(res => setTimeout(res, 3000));
+      attempts++;
+    }
+
+    if (!result) {
+      statusEl.innerHTML = "❌ Timed out waiting for processing.";
+    } else {
+      statusEl.innerHTML = "✅ File processed!";
+      renderXlfSegments(result.segments || []);
+    }
+
+  } catch (err) {
+    console.error(err);
+    statusEl.innerHTML = "❌ Upload or processing failed";
+  }
+});
+
+	
+    function renderXlfSegments(segments) {
+      const container = document.createElement("div");
+      container.className = "box";
+      container.id = "xlfPreview";
+
+      const table = document.createElement("table");
+      const header = table.insertRow();
+      ["Segment ID", "Source", "Target", "Similarity", "Formatting Issues", "Glossary Issues", "Consistency Check"].forEach(col => {
+        const th = document.createElement("th");
+        th.innerText = col;
+        header.appendChild(th);
+      });
+
+      segments.forEach(seg => {
+        const row = table.insertRow();
+        row.insertCell().innerText = seg["Segment ID"];
+        row.insertCell().innerText = seg["Source"];
+        row.insertCell().innerText = seg["Target"];
+
+        const simCell = row.insertCell();
+        simCell.innerText = seg["Similarity"];
+        simCell.title = seg["Notes"] || "";
+        if (seg["Similarity"] === "OK") simCell.className = "ok-cell";
+        else if (seg["Similarity"] === "CHECK") simCell.className = "check-cell";
+
+        row.insertCell().innerText = seg["FormattingIssues"] || "";
+        row.insertCell().innerText = seg["GlossaryIssues"] || "";
+        row.insertCell().innerText = seg["ConsistencyCheck"] || "";
+      });
+
+      container.appendChild(table);
+      const previewContainer = document.getElementById("xlfPreviewContainer");
+      previewContainer.innerHTML = "";
+      previewContainer.appendChild(container);
+      container.scrollIntoView({ behavior: "smooth" });
+    }
+  </script>
+</body>
+</html>
