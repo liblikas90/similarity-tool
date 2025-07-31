@@ -293,7 +293,7 @@ function applyFilters(table) {
           if (i === 3) {
             if (val === "OK") cell.className = "ok-cell";
             else if (val === "CHECK") cell.className = "check-cell";
-          } else if (val && val.trim() !== "") {
+          } else if (typeof val === "string" && val.trim() !== "") {
             cell.classList.add("highlight-cell");
           }
         });
