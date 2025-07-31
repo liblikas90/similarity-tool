@@ -228,29 +228,30 @@
       });
     }
 
-    function applyFilters(table) {
-      const filterRow = table.rows[1];
-      const filters = Array.from(filterRow.cells).map(cell => cell.firstChild.value);
+function applyFilters(table) {
+  const filterRow = table.rows[1];
+  const filters = Array.from(filterRow.cells).map(cell => cell.firstChild.value);
 
-      for (let i = 2; i < table.rows.length; i++) {
-        const row = table.rows[i];
-        let show = true;
+  for (let i = 2; i < table.rows.length; i++) {
+    const row = table.rows[i];
+    let show = true;
 
-        filters.forEach((filter, idx) => {
-          const cellText = row.cells[idx].innerText.trim();
-          if (!filter) return;
+    filters.forEach((filter, idx) => {
+      const raw = row.cells[idx].innerText;
+      const cellText = typeof raw === 'string' ? raw.trim() : '';
+      if (!filter) return;
 
-          if (idx === 3) {
-            if (cellText !== filter) show = false;
-          } else {
-            if (filter === "nonempty" && !cellText) show = false;
-            if (filter === "empty" && cellText) show = false;
-          }
-        });
-
-        row.style.display = show ? "" : "none";
+      if (idx === 3) {
+        if (cellText !== filter) show = false;
+      } else {
+        if (filter === "nonempty" && !cellText) show = false;
+        if (filter === "empty" && cellText) show = false;
       }
-    }
+    });
+
+    row.style.display = show ? "" : "none";
+  }
+}
 
     function renderXlfSegments(segments) {
       const container = document.createElement("div");
