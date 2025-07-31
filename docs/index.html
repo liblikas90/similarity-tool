@@ -55,10 +55,12 @@
       width: 100%;
       border-collapse: collapse;
       margin-top: 20px;
+      table-layout: auto;
     }
     th, td {
       padding: 6px;
       border: 1px solid #ccc;
+      word-wrap: break-word;
     }
     th {
       background-color: #eee;
@@ -73,6 +75,14 @@
     .check-cell {
       background-color: #ffeeba;
     }
+    .highlight-cell {
+      background-color: #ffe4b2;
+    }
+    .filter-row select {
+      width: 100%;
+      padding: 4px;
+      font-size: 12px;
+    }
   </style>
 </head>
 <body>
@@ -80,7 +90,7 @@
 
   <div class="input-group">
     <input type="text" id="pubNum" placeholder="e.g., EP1000000" />
-    <button onclick="fetchPatentInfo()">Get Title + FR Abstract</button>
+    <button onclick="fetchPatentInfo()">Get Title</button>
   </div>
 
   <div class="container">
@@ -99,11 +109,6 @@
         </form>
       </div>
     </div>
-
-    <div class="right box">
-      <h2>🇫🇷 French Abstract</h2>
-      <p id="fr-abstract" class="unavailable"></p>
-    </div>
   </div>
 
   <div id="xlfPreviewContainer"></div>
@@ -112,11 +117,8 @@
     async function fetchPatentInfo() {
       const pub = document.getElementById("pubNum").value;
       const result = document.getElementById("result");
-      const abstractEl = document.getElementById("fr-abstract");
 
       result.innerHTML = "<span class='loading'>⏳ Fetching titles...</span>";
-      abstractEl.innerHTML = "<span class='loading'>⏳ Fetching abstract...</span>";
-      abstractEl.className = "";
 
       fetch(`https://ipify.app.n8n.cloud/webhook/get-titles?pub=${pub}`)
         .then(res => res.json())
@@ -132,86 +134,124 @@
             }
           }
         });
+    }
 
-      fetch(`/get-abstract?pub=${pub}`)
-        .then(res => res.json())
-        .then(data => {
-          abstractEl.innerHTML = "";
-          if (data.error || data.abstract === "Unavailable") {
-            abstractEl.innerHTML = "<span class='unavailable'>Unavailable (timed out or failed)</span>";
+    document.getElementById("uploadForm").addEventListener("submit", async function (e) {
+      e.preventDefault();
+      const fileInput = e.target.querySelector("input[type='file']");
+      const statusEl = document.getElementById("uploadStatus");
+
+      if (!fileInput.files.length) {
+        statusEl.innerHTML = "❌ No file selected";
+        return;
+      }
+
+      const file = fileInput.files[0];
+      const uniqueSuffix = Date.now().toString(36) + "-" + Math.random().toString(36).substring(2, 8);
+      const fileName = `upload-${uniqueSuffix}.xlf`;
+      statusEl.innerHTML = "⏳ Generating upload URL...";
+
+      try {
+        const presignRes = await fetch("https://ipify.app.n8n.cloud/webhook/presign-upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filename: fileName })
+        });
+
+        const { uploadUrl, resultUrl } = await presignRes.json();
+        if (!uploadUrl || !resultUrl) throw new Error("No presigned URL returned");
+
+        statusEl.innerHTML = "⏳ Uploading to S3...";
+        await fetch(uploadUrl, {
+          method: "PUT",
+          headers: { "Content-Type": "application/octet-stream" },
+          body: file
+        });
+
+        statusEl.innerHTML = "⏳ File uploaded. Waiting for processing...";
+        const maxAttempts = 20;
+        let attempts = 0;
+        let result = null;
+
+        while (attempts < maxAttempts) {
+          const check = await fetch(resultUrl);
+          if (check.ok) {
+            result = await check.json();
+            break;
+          }
+          await new Promise(res => setTimeout(res, 3000));
+          attempts++;
+        }
+
+        if (!result) {
+          statusEl.innerHTML = "❌ Timed out waiting for processing.";
+        } else {
+          statusEl.innerHTML = "✅ File processed!";
+          renderXlfSegments(result.segments || []);
+        }
+
+      } catch (err) {
+        console.error(err);
+        statusEl.innerHTML = "❌ Upload or processing failed";
+      }
+    });
+
+    function createFilterRow(table) {
+      const filterRow = table.insertRow();
+      filterRow.className = "filter-row";
+
+      const headers = [
+        "Segment ID",
+        "Source",
+        "Target",
+        "Similarity",
+        "Similarity Notes",
+        "Formatting Issues",
+        "Glossary Issues",
+        "Consistency Check"
+      ];
+
+      headers.forEach((header, idx) => {
+        const cell = document.createElement("th");
+        const select = document.createElement("select");
+        select.innerHTML = `<option value="">— Filter —</option>`;
+
+        if (header === "Similarity") {
+          select.innerHTML += `<option value="OK">OK</option><option value="CHECK">CHECK</option>`;
+        } else {
+          select.innerHTML += `<option value="nonempty">Has content</option><option value="empty">Empty</option>`;
+        }
+
+        select.addEventListener("change", () => applyFilters(table));
+        cell.appendChild(select);
+        filterRow.appendChild(cell);
+      });
+    }
+
+    function applyFilters(table) {
+      const filterRow = table.rows[1];
+      const filters = Array.from(filterRow.cells).map(cell => cell.firstChild.value);
+
+      for (let i = 2; i < table.rows.length; i++) {
+        const row = table.rows[i];
+        let show = true;
+
+        filters.forEach((filter, idx) => {
+          const cellText = row.cells[idx].innerText.trim();
+          if (!filter) return;
+
+          if (idx === 3) {
+            if (cellText !== filter) show = false;
           } else {
-            abstractEl.innerText = data.abstract;
+            if (filter === "nonempty" && !cellText) show = false;
+            if (filter === "empty" && cellText) show = false;
           }
         });
-    }
 
-    
-	document.getElementById("uploadForm").addEventListener("submit", async function (e) {
-  e.preventDefault();
-  const fileInput = e.target.querySelector("input[type='file']");
-  const statusEl = document.getElementById("uploadStatus");
-
-  if (!fileInput.files.length) {
-    statusEl.innerHTML = "❌ No file selected";
-    return;
-  }
-
-  const file = fileInput.files[0];
-  const uniqueSuffix = Date.now().toString(36) + "-" + Math.random().toString(36).substring(2, 8);
-  const fileName = `upload-${uniqueSuffix}.xlf`;
-  statusEl.innerHTML = "⏳ Generating upload URL...";
-
-  try {
-    // Step 1: Request presigned URL
-    const presignRes = await fetch("https://ipify.app.n8n.cloud/webhook/presign-upload", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ filename: fileName })
-    });
-
-    const { uploadUrl, resultUrl } = await presignRes.json();
-    if (!uploadUrl || !resultUrl) throw new Error("No presigned URL returned");
-
-    statusEl.innerHTML = "⏳ Uploading to S3...";
-
-    // Step 2: Upload to S3
-    await fetch(uploadUrl, {
-      method: "PUT",
-      headers: { "Content-Type": "application/octet-stream" },
-      body: file
-    });
-
-    statusEl.innerHTML = "⏳ File uploaded. Waiting for processing...";
-
-    // Step 3: Poll for result
-    const maxAttempts = 20;
-    let attempts = 0;
-    let result = null;
-
-    while (attempts < maxAttempts) {
-      const check = await fetch(resultUrl);
-      if (check.ok) {
-        result = await check.json();
-        break;
+        row.style.display = show ? "" : "none";
       }
-      await new Promise(res => setTimeout(res, 3000));
-      attempts++;
     }
 
-    if (!result) {
-      statusEl.innerHTML = "❌ Timed out waiting for processing.";
-    } else {
-      statusEl.innerHTML = "✅ File processed!";
-      renderXlfSegments(result.segments || []);
-    }
-
-  } catch (err) {
-    console.error(err);
-    statusEl.innerHTML = "❌ Upload or processing failed";
-  }
-});
-
-	
     function renderXlfSegments(segments) {
       const container = document.createElement("div");
       container.className = "box";
@@ -219,27 +259,43 @@
 
       const table = document.createElement("table");
       const header = table.insertRow();
-      ["Segment ID", "Source", "Target", "Similarity", "Formatting Issues", "Glossary Issues", "Consistency Check"].forEach(col => {
+      const headers = [
+        "Segment ID", "Source", "Target", "Similarity", "Similarity Notes",
+        "Formatting Issues", "Glossary Issues", "Consistency Check"
+      ];
+
+      headers.forEach(col => {
         const th = document.createElement("th");
         th.innerText = col;
         header.appendChild(th);
       });
 
+      createFilterRow(table);
+
       segments.forEach(seg => {
         const row = table.insertRow();
-        row.insertCell().innerText = seg["Segment ID"];
-        row.insertCell().innerText = seg["Source"];
-        row.insertCell().innerText = seg["Target"];
+        const fields = [
+          seg["Segment ID"],
+          seg["Source"],
+          seg["Target"],
+          seg["Similarity"],
+          seg["Notes"] || "",
+          seg["FormattingIssues"] || "",
+          seg["GlossaryIssues"] || "",
+          seg["ConsistencyCheck"] || ""
+        ];
 
-        const simCell = row.insertCell();
-        simCell.innerText = seg["Similarity"];
-        simCell.title = seg["Notes"] || "";
-        if (seg["Similarity"] === "OK") simCell.className = "ok-cell";
-        else if (seg["Similarity"] === "CHECK") simCell.className = "check-cell";
+        fields.forEach((val, i) => {
+          const cell = row.insertCell();
+          cell.innerText = val;
 
-        row.insertCell().innerText = seg["FormattingIssues"] || "";
-        row.insertCell().innerText = seg["GlossaryIssues"] || "";
-        row.insertCell().innerText = seg["ConsistencyCheck"] || "";
+          if (i === 3) {
+            if (val === "OK") cell.className = "ok-cell";
+            else if (val === "CHECK") cell.className = "check-cell";
+          } else if (val && val.trim() !== "") {
+            cell.classList.add("highlight-cell");
+          }
+        });
       });
 
       container.appendChild(table);
