@@ -196,37 +196,48 @@
       }
     });
 
-    function createFilterRow(table) {
-      const filterRow = table.insertRow();
-      filterRow.className = "filter-row";
+function createFilterRow(table) {
+  const filterRow = table.insertRow();
+  filterRow.className = "filter-row";
 
-      const headers = [
-        "Segment ID",
-        "Source",
-        "Target",
-        "Similarity",
-        "Similarity Notes",
-        "Formatting Issues",
-        "Glossary Issues",
-        "Consistency Check"
-      ];
+  // Column headers (with checkbox placeholder)
+  const headers = [
+    "", // No filter for checkbox
+    "Segment ID",
+    "Source",
+    "Target",
+    "Similarity",
+    "Similarity Notes",
+    "Formatting Issues",
+    "Glossary Issues",
+    "Consistency Check"
+  ];
 
-      headers.forEach((header, idx) => {
-        const cell = document.createElement("th");
-        const select = document.createElement("select");
-        select.innerHTML = `<option value="">— Filter —</option>`;
+  headers.forEach((header, idx) => {
+    const cell = document.createElement("th");
 
-        if (header === "Similarity") {
-          select.innerHTML += `<option value="OK">OK</option><option value="CHECK">CHECK</option>`;
-        } else {
-          select.innerHTML += `<option value="nonempty">Has content</option><option value="empty">Empty</option>`;
-        }
-
-        select.addEventListener("change", () => applyFilters(table));
-        cell.appendChild(select);
-        filterRow.appendChild(cell);
-      });
+    // No filter for the checkbox column
+    if (idx === 0) {
+      cell.innerHTML = ""; 
+      filterRow.appendChild(cell);
+      return;
     }
+
+    const select = document.createElement("select");
+    select.innerHTML = `<option value="">— Filter —</option>`;
+
+    if (header === "Similarity") {
+      select.innerHTML += `<option value="OK">OK</option><option value="CHECK">CHECK</option>`;
+    } else {
+      select.innerHTML += `<option value="nonempty">Has content</option><option value="empty">Empty</option>`;
+    }
+
+    select.addEventListener("change", () => applyFilters(table));
+    cell.appendChild(select);
+    filterRow.appendChild(cell);
+  });
+}
+
 
 function applyFilters(table) {
   const filterRow = table.rows[1];
@@ -253,58 +264,107 @@ function applyFilters(table) {
   }
 }
 
-    function renderXlfSegments(segments) {
-      const container = document.createElement("div");
-      container.className = "box";
-      container.id = "xlfPreview";
+function renderXlfSegments(segments) {
+  const container = document.createElement("div");
+  container.className = "box";
+  container.id = "xlfPreview";
 
-      const table = document.createElement("table");
-      const header = table.insertRow();
-      const headers = [
-        "Segment ID", "Source", "Target", "Similarity", "Similarity Notes",
-        "Formatting Issues", "Glossary Issues", "Consistency Check"
-      ];
+  const table = document.createElement("table");
+  const header = table.insertRow();
+  const headers = [
+    "", // For checkbox
+    "Segment ID", "Source", "Target", "Similarity", "Similarity Notes",
+    "Formatting Issues", "Glossary Issues", "Consistency Check"
+  ];
 
-      headers.forEach(col => {
-        const th = document.createElement("th");
-        th.innerText = col;
-        header.appendChild(th);
-      });
+  headers.forEach(col => {
+    const th = document.createElement("th");
+    th.innerText = col;
+    header.appendChild(th);
+  });
 
-      createFilterRow(table);
+  createFilterRow(table);
 
-      segments.forEach(seg => {
-        const row = table.insertRow();
-        const fields = [
-          seg["Segment ID"],
-          seg["Source"],
-          seg["Target"],
-          seg["Similarity"],
-          seg["Notes"] || "",
-          seg["FormattingIssues"] || "",
-          seg["GlossaryIssues"] || "",
-          seg["ConsistencyCheck"] || ""
-        ];
+  segments.forEach(seg => {
+    const row = table.insertRow();
 
-        fields.forEach((val, i) => {
-          const cell = row.insertCell();
-          cell.innerText = val;
+    // Extract quoted text from Similarity Notes
+    const notes = seg["Notes"] || "";
+    const quoted = [...notes.matchAll(/"([^"]+)"/g)].map(m => m[1]);
 
-          if (i === 3) {
-            if (val === "OK") cell.className = "ok-cell";
-            else if (val === "CHECK") cell.className = "check-cell";
-          } else if (typeof val === "string" && val.trim() !== "") {
-            cell.classList.add("highlight-cell");
+    // Insert checkbox
+    const checkboxCell = row.insertCell();
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.addEventListener("change", () => {
+      row.style.backgroundColor = checkbox.checked ? "#ffffcc" : "";
+    });
+    checkboxCell.appendChild(checkbox);
+
+    const fields = [
+      seg["Segment ID"],
+      seg["Source"],
+      seg["Target"],
+      seg["Similarity"],
+      notes,
+      seg["FormattingIssues"] || "",
+      seg["GlossaryIssues"] || "",
+      seg["ConsistencyCheck"] || ""
+    ];
+
+    fields.forEach((val, i) => {
+      const cell = row.insertCell();
+      if (i === 1 || i === 2) {
+        // Highlight quoted text in red
+        let html = val;
+        quoted.forEach(q => {
+          const regex = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), "gi");
+          html = html.replace(regex, `<span style="color:red">${q}</span>`);
+        });
+        cell.innerHTML = html;
+      } else {
+        cell.innerText = val;
+      }
+
+      // Background color for Similarity
+      if (i === 3) {
+        if (val === "OK") cell.className = "ok-cell";
+        else if (val === "CHECK") cell.className = "check-cell";
+      }
+
+      // Toggle background/formatting on click
+      if ([3, 4, 5, 6, 7].includes(i)) {
+        cell.style.cursor = "pointer";
+        cell.addEventListener("click", () => {
+          const isActive = cell.dataset.active === "true";
+          if (!isActive) {
+            cell.style.backgroundColor = "#c8f7c5";
+            cell.style.color = "gray";
+            cell.style.fontStyle = "italic";
+            cell.dataset.active = "true";
+          } else {
+            cell.style.backgroundColor = "";
+            cell.style.color = "";
+            cell.style.fontStyle = "";
+            cell.dataset.active = "false";
           }
         });
-      });
+      }
 
-      container.appendChild(table);
-      const previewContainer = document.getElementById("xlfPreviewContainer");
-      previewContainer.innerHTML = "";
-      previewContainer.appendChild(container);
-      container.scrollIntoView({ behavior: "smooth" });
-    }
+      // Highlight cell if not empty
+      if (typeof val === "string" && val.trim() !== "" && i > 2) {
+        cell.classList.add("highlight-cell");
+      }
+    });
+  });
+
+  const previewContainer = document.getElementById("xlfPreviewContainer");
+  previewContainer.innerHTML = "";
+  container.appendChild(table);
+  previewContainer.appendChild(container);
+  container.scrollIntoView({ behavior: "smooth" });
+}
+
   </script>
 </body>
 </html>
