@@ -78,6 +78,13 @@
     .highlight-cell {
       background-color: #ffe4b2;
     }
+    .row-highlighted {
+      background-color: #ffffcc !important;
+    }
+    .quoted-term {
+      color: red;
+      font-weight: bold;
+    }
     .filter-row select {
       width: 100%;
       padding: 4px;
@@ -118,14 +125,14 @@
       const pub = document.getElementById("pubNum").value;
       const result = document.getElementById("result");
 
-      result.innerHTML = "<span class='loading'>⏳ Fetching titles...</span>";
+      result.innerHTML = "<span class='loading'>\u23f3 Fetching titles...</span>";
 
       fetch(`https://ipify.app.n8n.cloud/webhook/get-titles?pub=${pub}`)
         .then(res => res.json())
         .then(data => {
           result.innerHTML = "";
           if (data.error) {
-            result.innerHTML = `<span class='error'>❌ ${data.error}</span>`;
+            result.innerHTML = `<span class='error'>\u274c ${data.error}</span>`;
           } else {
             for (const [lang, title] of Object.entries(data.titles)) {
               const p = document.createElement("p");
@@ -142,14 +149,14 @@
       const statusEl = document.getElementById("uploadStatus");
 
       if (!fileInput.files.length) {
-        statusEl.innerHTML = "❌ No file selected";
+        statusEl.innerHTML = "\u274c No file selected";
         return;
       }
 
       const file = fileInput.files[0];
       const uniqueSuffix = Date.now().toString(36) + "-" + Math.random().toString(36).substring(2, 8);
       const fileName = `upload-${uniqueSuffix}.xlf`;
-      statusEl.innerHTML = "⏳ Generating upload URL...";
+      statusEl.innerHTML = "\u23f3 Generating upload URL...";
 
       try {
         const presignRes = await fetch("https://ipify.app.n8n.cloud/webhook/presign-upload", {
@@ -161,14 +168,14 @@
         const { uploadUrl, resultUrl } = await presignRes.json();
         if (!uploadUrl || !resultUrl) throw new Error("No presigned URL returned");
 
-        statusEl.innerHTML = "⏳ Uploading to S3...";
+        statusEl.innerHTML = "\u23f3 Uploading to S3...";
         await fetch(uploadUrl, {
           method: "PUT",
           headers: { "Content-Type": "application/octet-stream" },
           body: file
         });
 
-        statusEl.innerHTML = "⏳ File uploaded. Waiting for processing...";
+        statusEl.innerHTML = "\u23f3 File uploaded. Waiting for processing...";
         const maxAttempts = 200;
         let attempts = 0;
         let result = null;
@@ -184,15 +191,15 @@
         }
 
         if (!result) {
-          statusEl.innerHTML = "❌ Timed out waiting for processing.";
+          statusEl.innerHTML = "\u274c Timed out waiting for processing.";
         } else {
-          statusEl.innerHTML = "✅ File processed!";
+          statusEl.innerHTML = "\u2705 File processed!";
           renderXlfSegments(result.segments || []);
         }
 
       } catch (err) {
         console.error(err);
-        statusEl.innerHTML = "❌ Upload or processing failed";
+        statusEl.innerHTML = "\u274c Upload or processing failed";
       }
     });
 
@@ -201,14 +208,8 @@
       filterRow.className = "filter-row";
 
       const headers = [
-        "Segment ID",
-        "Source",
-        "Target",
-        "Similarity",
-        "Similarity Notes",
-        "Formatting Issues",
-        "Glossary Issues",
-        "Consistency Check"
+        "", "Segment ID", "Source", "Target", "Similarity",
+        "Similarity Notes", "Formatting Issues", "Glossary Issues", "Consistency Check"
       ];
 
       headers.forEach((header, idx) => {
@@ -216,7 +217,9 @@
         const select = document.createElement("select");
         select.innerHTML = `<option value="">— Filter —</option>`;
 
-        if (header === "Similarity") {
+        if (idx === 0) {
+          select.innerHTML += `<option value="checked">Checked</option><option value="unchecked">Unchecked</option>`;
+        } else if (header === "Similarity") {
           select.innerHTML += `<option value="OK">OK</option><option value="CHECK">CHECK</option>`;
         } else {
           select.innerHTML += `<option value="nonempty">Has content</option><option value="empty">Empty</option>`;
@@ -228,30 +231,36 @@
       });
     }
 
-function applyFilters(table) {
-  const filterRow = table.rows[1];
-  const filters = Array.from(filterRow.cells).map(cell => cell.firstChild.value);
+    function applyFilters(table) {
+      const filterRow = table.rows[1];
+      const filters = Array.from(filterRow.cells).map(cell => cell.firstChild.value);
 
-  for (let i = 2; i < table.rows.length; i++) {
-    const row = table.rows[i];
-    let show = true;
+      for (let i = 2; i < table.rows.length; i++) {
+        const row = table.rows[i];
+        let show = true;
 
-    filters.forEach((filter, idx) => {
-      const raw = row.cells[idx].innerText;
-      const cellText = typeof raw === 'string' ? raw.trim() : '';
-      if (!filter) return;
+        filters.forEach((filter, idx) => {
+          if (!filter) return;
 
-      if (idx === 3) {
-        if (cellText !== filter) show = false;
-      } else {
-        if (filter === "nonempty" && !cellText) show = false;
-        if (filter === "empty" && cellText) show = false;
+          if (idx === 0) {
+            const isChecked = row.dataset.checked === "true";
+            if (filter === "checked" && !isChecked) show = false;
+            if (filter === "unchecked" && isChecked) show = false;
+          } else {
+            const cellText = row.cells[idx].innerText.trim();
+            if (idx === 4) {
+              if (filter === "OK" && cellText !== "OK") show = false;
+              if (filter === "CHECK" && cellText !== "CHECK") show = false;
+            } else {
+              if (filter === "nonempty" && !cellText) show = false;
+              if (filter === "empty" && cellText) show = false;
+            }
+          }
+        });
+
+        row.style.display = show ? "" : "none";
       }
-    });
-
-    row.style.display = show ? "" : "none";
-  }
-}
+    }
 
     function renderXlfSegments(segments) {
       const container = document.createElement("div");
@@ -261,7 +270,7 @@ function applyFilters(table) {
       const table = document.createElement("table");
       const header = table.insertRow();
       const headers = [
-        "Segment ID", "Source", "Target", "Similarity", "Similarity Notes",
+        "", "Segment ID", "Source", "Target", "Similarity", "Similarity Notes",
         "Formatting Issues", "Glossary Issues", "Consistency Check"
       ];
 
@@ -275,33 +284,71 @@ function applyFilters(table) {
 
       segments.forEach(seg => {
         const row = table.insertRow();
+
+        const notes = seg["Notes"] || "";
+        const quoted = [...notes.matchAll(/'([^"]+?)'/g)].map(m => m[1]);
+
+        const checkboxCell = row.insertCell();
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.addEventListener("change", () => {
+          row.classList.toggle("row-highlighted", checkbox.checked);
+          row.dataset.checked = checkbox.checked ? "true" : "false";
+        });
+        checkboxCell.appendChild(checkbox);
+        row.dataset.checked = "false";
+
         const fields = [
-          seg["Segment ID"],
-          seg["Source"],
-          seg["Target"],
-          seg["Similarity"],
-          seg["Notes"] || "",
-          seg["FormattingIssues"] || "",
-          seg["GlossaryIssues"] || "",
-          seg["ConsistencyCheck"] || ""
+          seg["Segment ID"], seg["Source"], seg["Target"], seg["Similarity"],
+          notes, seg["FormattingIssues"] || "", seg["GlossaryIssues"] || "", seg["ConsistencyCheck"] || ""
         ];
 
         fields.forEach((val, i) => {
           const cell = row.insertCell();
-          cell.innerText = val;
+          if ((i === 1 || i === 2) && typeof val === "string") {
+            let html = val;
+            quoted.forEach(q => {
+            const escaped = q.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&');
+            const regex = new RegExp(escaped, 'gi');
+            html = html.replace(regex, match => `<span class="quoted-term">${match}</span>`);
+            });
+            cell.innerHTML = html;
+          } else {
+            cell.innerText = val;
+          }
 
           if (i === 3) {
             if (val === "OK") cell.className = "ok-cell";
             else if (val === "CHECK") cell.className = "check-cell";
-          } else if (typeof val === "string" && val.trim() !== "") {
-            cell.classList.add("highlight-cell");
           }
+
+          if ([3, 4, 5, 6, 7].includes(i)) {
+            cell.style.cursor = "pointer";
+            cell.addEventListener("click", () => {
+              const active = cell.dataset.active === "true";
+              if (!active) {
+                cell.style.backgroundColor = "#c8f7c5";
+                cell.style.color = "gray";
+                cell.style.fontStyle = "italic";
+                cell.dataset.active = "true";
+              } else {
+                cell.style.backgroundColor = "";
+                cell.style.color = "";
+                cell.style.fontStyle = "";
+                cell.dataset.active = "false";
+              }
+            });
+          }
+
+        if (typeof val === "string" && val.trim() !== "" && i > 2 && i !== 3) {
+            cell.classList.add("highlight-cell");
+        }
         });
       });
 
-      container.appendChild(table);
       const previewContainer = document.getElementById("xlfPreviewContainer");
       previewContainer.innerHTML = "";
+      container.appendChild(table);
       previewContainer.appendChild(container);
       container.scrollIntoView({ behavior: "smooth" });
     }
